@@ -208,7 +208,7 @@ jobs:
             git -C "$DEVICE_PATH" rev-parse HEAD
           } >> "$GITHUB_WORKSPACE/reports/build-info.txt"
 
-            - name: Remove obsolete boot-control setting
+      - name: Remove obsolete boot-control setting
         run: |
           set -eo pipefail
 
@@ -220,22 +220,28 @@ jobs:
           import re
 
           path = pathlib.Path(os.environ["DEVICE_PATH"]) / "device.mk"
+
+          if not path.is_file():
+              raise SystemExit(f"Missing device configuration: {path}")
+
           lines = path.read_text().splitlines(keepends=True)
           result = []
           skipping = False
           removed = 0
+          backslash = chr(92)
+
+          pattern = re.compile(
+              r"^[ \t]*(?:export[ \t]+)?PRODUCT_STATIC_BOOT_CONTROL_HAL[ \t]*[:+?]?="
+          )
 
           for line in lines:
-              if not skipping and re.match(
-                  r"^s*(?:exports+)?PRODUCT_STATIC_BOOT_CONTROL_HALs*[:+?]?=",
-                  line,
-              ):
+              if not skipping and pattern.match(line):
                   removed += 1
-                  skipping = line.rstrip().endswith("\\")
+                  skipping = line.rstrip().endswith(backslash)
                   continue
 
               if skipping:
-                  skipping = line.rstrip().endswith("\\")
+                  skipping = line.rstrip().endswith(backslash)
                   continue
 
               result.append(line)
@@ -340,6 +346,7 @@ jobs:
           mkdir -p "$destination"
           cp "$output/$image" "$destination/"
           cp "$GITHUB_WORKSPACE/reports/build-info.txt" "$destination/"
+          cp "$GITHUB_WORKSPACE/reports/device-tree-patch.diff" "$destination/"
 
           {
             echo "EXPERIMENTAL BUILD — NOT VALIDATED FOR FLASHING"
@@ -347,6 +354,8 @@ jobs:
             echo "Device: Google Pixel 6a / bluejay"
             echo "Android 16 compatibility has not been established."
             echo "A successful build does not prove bootability or decryption."
+            echo "The obsolete boot-control setting was removed for compilation."
+            echo "Recovery boot-control HAL support still requires validation."
           } > "$destination/READ-ME-FIRST.txt"
 
           cd "$destination"
