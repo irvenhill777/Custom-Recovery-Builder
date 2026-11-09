@@ -66,7 +66,6 @@ jobs:
       - name: Prepare diagnostic directory
         run: |
           set -eo pipefail
-
           mkdir -p "$GITHUB_WORKSPACE/reports"
 
           {
@@ -138,7 +137,6 @@ jobs:
       - name: Install repo tool
         run: |
           set -eo pipefail
-
           mkdir -p "$HOME/bin"
 
           curl --fail --show-error --location --retry 3 --output "$HOME/bin/repo" "https://storage.googleapis.com/git-repo-downloads/repo" 2>&1 | tee "$GITHUB_WORKSPACE/reports/install-repo.log"
@@ -169,7 +167,6 @@ jobs:
       - name: Download TWRP source
         run: |
           set -eo pipefail
-
           cd "$GITHUB_WORKSPACE/android-recovery"
 
           repo sync \
@@ -183,7 +180,6 @@ jobs:
       - name: Clone Pixel 6a device tree
         run: |
           set -eo pipefail
-
           cd "$GITHUB_WORKSPACE/android-recovery"
 
           if [ -e "$DEVICE_PATH" ]; then
@@ -208,33 +204,37 @@ jobs:
             git -C "$DEVICE_PATH" rev-parse HEAD
           } >> "$GITHUB_WORKSPACE/reports/build-info.txt"
 
-      - name: Remove obsolete boot-control setting
+      - name: Patch legacy device configuration
         run: |
           set -eo pipefail
-
           cd "$GITHUB_WORKSPACE/android-recovery"
+
+          if [ ! -f vendor/twrp/config/common.mk ]; then
+            echo "::error::Missing vendor/twrp/config/common.mk; check source sync."
+            exit 1
+          fi
 
           python3 - <<'PY'
           import os
-          import pathlib
           import re
+          from pathlib import Path
 
-          path = pathlib.Path(os.environ["DEVICE_PATH"]) / "device.mk"
+          root = Path(os.environ["DEVICE_PATH"])
+          device_mk = root / "device.mk"
 
-          if not path.is_file():
-              raise SystemExit(f"Missing device configuration: {path}")
-
-          lines = path.read_text().splitlines(keepends=True)
-          result = []
-          skipping = False
-          removed = 0
-          backslash = chr(92)
+          if not device_mk.is_file():
+              raise SystemExit(f"Missing configuration: {device_mk}")
 
           pattern = re.compile(
               r"^[ \t]*(?:export[ \t]+)?PRODUCT_STATIC_BOOT_CONTROL_HAL[ \t]*[:+?]?="
           )
 
-          for line in lines:
+          result = []
+          skipping = False
+          removed = 0
+          backslash = chr(92)
+
+          for line in device_mk.read_text().splitlines(keepends=True):
               if not skipping and pattern.match(line):
                   removed += 1
                   skipping = line.rstrip().endswith(backslash)
@@ -246,17 +246,29 @@ jobs:
 
               result.append(line)
 
-          path.write_text("".join(result))
-          print(f"Removed {removed} obsolete assignment(s) from {path}")
+          device_mk.write_text("".join(result))
+          print(f"Removed {removed} obsolete boot-control assignment(s).")
+
+          old = "vendor/omni/config/common.mk"
+          new = "vendor/twrp/config/common.mk"
+          changed = 0
+
+          for path in sorted(root.rglob("*.mk")):
+              text = path.read_text()
+              if old in text:
+                  path.write_text(text.replace(old, new))
+                  print(f"Updated configuration include: {path}")
+                  changed += 1
+
+          print(f"Updated Omni includes in {changed} makefile(s).")
           PY
 
-          git -C "$DEVICE_PATH" diff -- device.mk \
+          git -C "$DEVICE_PATH" diff \
             | tee "$GITHUB_WORKSPACE/reports/device-tree-patch.diff"
 
       - name: Inspect and validate device configuration
         run: |
           set -eo pipefail
-
           cd "$GITHUB_WORKSPACE/android-recovery"
 
           {
@@ -306,7 +318,6 @@ jobs:
       - name: Build experimental recovery image
         run: |
           set -eo pipefail
-
           cd "$GITHUB_WORKSPACE/android-recovery"
 
           {
@@ -353,8 +364,8 @@ jobs:
             echo
             echo "Device: Google Pixel 6a / bluejay"
             echo "Android 16 compatibility has not been established."
-            echo "A successful build does not prove bootability or decryption."
-            echo "The obsolete boot-control setting was removed for compilation."
+            echo "Compilation does not prove bootability or decryption."
+            echo "Legacy configuration was patched during this build."
             echo "Recovery boot-control HAL support still requires validation."
           } > "$destination/READ-ME-FIRST.txt"
 
