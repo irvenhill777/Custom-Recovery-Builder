@@ -208,6 +208,45 @@ jobs:
             git -C "$DEVICE_PATH" rev-parse HEAD
           } >> "$GITHUB_WORKSPACE/reports/build-info.txt"
 
+            - name: Remove obsolete boot-control setting
+        run: |
+          set -eo pipefail
+
+          cd "$GITHUB_WORKSPACE/android-recovery"
+
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path(os.environ["DEVICE_PATH"]) / "device.mk"
+          lines = path.read_text().splitlines(keepends=True)
+          result = []
+          skipping = False
+          removed = 0
+
+          for line in lines:
+              if not skipping and re.match(
+                  r"^s*(?:exports+)?PRODUCT_STATIC_BOOT_CONTROL_HALs*[:+?]?=",
+                  line,
+              ):
+                  removed += 1
+                  skipping = line.rstrip().endswith("\\")
+                  continue
+
+              if skipping:
+                  skipping = line.rstrip().endswith("\\")
+                  continue
+
+              result.append(line)
+
+          path.write_text("".join(result))
+          print(f"Removed {removed} obsolete assignment(s) from {path}")
+          PY
+
+          git -C "$DEVICE_PATH" diff -- device.mk \
+            | tee "$GITHUB_WORKSPACE/reports/device-tree-patch.diff"
+
       - name: Inspect and validate device configuration
         run: |
           set -eo pipefail
