@@ -23,16 +23,6 @@ on:
         default: "bluejay_beta-user-UpsideDownCake-UPP2.230217.004-9663077-release-keys"
         type: string
 
-      BUILD_TARGET:
-        description: "Experimental target; must match the device tree"
-        required: true
-        default: "vendorboot"
-        type: choice
-        options:
-          - vendorboot
-          - boot
-          - recovery
-
 permissions:
   contents: read
 
@@ -55,7 +45,6 @@ jobs:
       MANIFEST_BRANCH: ${{ inputs.MANIFEST_BRANCH }}
       DEVICE_TREE: ${{ inputs.DEVICE_TREE }}
       DEVICE_TREE_BRANCH: ${{ inputs.DEVICE_TREE_BRANCH }}
-      BUILD_TARGET: ${{ inputs.BUILD_TARGET }}
       DEVICE_PATH: device/google/bluejay
       DEVICE_NAME: bluejay
 
@@ -74,10 +63,8 @@ jobs:
             echo "Manifest branch: $MANIFEST_BRANCH"
             echo "Device tree: $DEVICE_TREE"
             echo "Device-tree branch: $DEVICE_TREE_BRANCH"
-            echo "Requested target: ${BUILD_TARGET}image"
             echo
-            echo "EXPERIMENTAL: Android 16 compatibility is not established."
-            echo "Do not flash output without validating the device port."
+            echo "EXPERIMENTAL — NOT VALIDATED FOR FLASHING"
             echo
             df -h
             free -h
@@ -92,38 +79,13 @@ jobs:
 
             sudo env DEBIAN_FRONTEND=noninteractive \
               apt-get install -y --no-install-recommends \
-                bc \
-                bison \
-                build-essential \
-                ca-certificates \
-                ccache \
-                cpio \
-                curl \
-                flex \
-                g++-multilib \
-                gcc-multilib \
-                git \
-                git-lfs \
-                gnupg \
-                gperf \
-                lib32ncurses-dev \
-                lib32readline-dev \
-                lib32z1-dev \
-                libelf-dev \
-                liblz4-tool \
-                libncurses-dev \
-                libssl-dev \
-                libxml2-utils \
-                lzop \
-                python3 \
-                rsync \
-                schedtool \
-                squashfs-tools \
-                unzip \
-                wget \
-                xsltproc \
-                zip \
-                zlib1g-dev
+                bc bison build-essential ca-certificates \
+                ccache cpio curl flex g++-multilib gcc-multilib \
+                git git-lfs gnupg gperf \
+                lib32ncurses-dev lib32readline-dev lib32z1-dev \
+                libelf-dev liblz4-tool libncurses-dev libssl-dev \
+                libxml2-utils lzop python3 rsync schedtool \
+                squashfs-tools unzip wget xsltproc zip zlib1g-dev
 
             sudo apt-get clean
           } 2>&1 | tee "$GITHUB_WORKSPACE/reports/dependencies.log"
@@ -210,7 +172,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/android-recovery"
 
           if [ ! -f vendor/twrp/config/common.mk ]; then
-            echo "::error::Missing vendor/twrp/config/common.mk; check source sync."
+            echo "::error::Missing vendor/twrp/config/common.mk."
             exit 1
           fi
 
@@ -251,16 +213,12 @@ jobs:
 
           old = "vendor/omni/config/common.mk"
           new = "vendor/twrp/config/common.mk"
-          changed = 0
 
           for path in sorted(root.rglob("*.mk")):
               text = path.read_text()
               if old in text:
                   path.write_text(text.replace(old, new))
                   print(f"Updated configuration include: {path}")
-                  changed += 1
-
-          print(f"Updated Omni includes in {changed} makefile(s).")
           PY
 
           git -C "$DEVICE_PATH" diff \
@@ -291,7 +249,6 @@ jobs:
             done
 
             echo
-            echo "=== Available disk space ==="
             df -h
           } | tee "$GITHUB_WORKSPACE/reports/device-config.txt"
 
@@ -307,15 +264,13 @@ jobs:
           elif [ -f "$DEVICE_PATH/omni_${DEVICE_NAME}.mk" ]; then
             product="omni_${DEVICE_NAME}"
           else
-            echo "::error::No matching TWRP or Omni product makefile."
+            echo "::error::No matching product makefile."
             exit 1
           fi
 
           echo "DEVICE_PRODUCT=$product" >> "$GITHUB_ENV"
-          echo "Selected product: $product" \
-            >> "$GITHUB_WORKSPACE/reports/build-info.txt"
 
-      - name: Build experimental recovery image
+      - name: Select target and build experimental recovery
         run: |
           set -eo pipefail
           cd "$GITHUB_WORKSPACE/android-recovery"
@@ -323,39 +278,98 @@ jobs:
           {
             source build/envsetup.sh
             lunch "${DEVICE_PRODUCT}-eng"
-            make -j2 "${BUILD_TARGET}image"
+
+            recovery_as_boot="$(get_build_var BOARD_USES_RECOVERY_AS_BOOT)"
+            move_to_vendor="$(get_build_var BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT)"
+            include_in_vendor="$(get_build_var BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT)"
+            vendor_size="$(get_build_var BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE)"
+            recovery_size="$(get_build_var BOARD_RECOVERYIMAGE_PARTITION_SIZE)"
+            no_recovery="$(get_build_var TARGET_NO_RECOVERY)"
+            product_out="$(get_build_var PRODUCT_OUT)"
+
+            echo "BOARD_USES_RECOVERY_AS_BOOT=$recovery_as_boot"
+            echo "BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT=$move_to_vendor"
+            echo "BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=$include_in_vendor"
+            echo "BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE=$vendor_size"
+            echo "BOARD_RECOVERYIMAGE_PARTITION_SIZE=$recovery_size"
+            echo "TARGET_NO_RECOVERY=$no_recovery"
+            echo "PRODUCT_OUT=$product_out"
+
+            if [ "$move_to_vendor" = "true" ] || \
+               [ "$include_in_vendor" = "true" ]; then
+              if [ -z "$vendor_size" ] || [ "$vendor_size" = "0" ]; then
+                echo "::error::Vendor recovery is enabled but vendor_boot size is missing."
+                exit 1
+              fi
+
+              target="vendorbootimage"
+              image="vendor_boot.img"
+
+            elif [ "$recovery_as_boot" = "true" ]; then
+              target="bootimage"
+              image="boot.img"
+
+            elif [ "$no_recovery" != "true" ] && \
+                 [ -n "$recovery_size" ] && \
+                 [ "$recovery_size" != "0" ]; then
+              target="recoveryimage"
+              image="recovery.img"
+
+            else
+              echo "::error::No unambiguous recovery target in this device configuration."
+              echo "::error::Inspect BoardConfig.mk; do not force a partition target."
+              exit 1
+            fi
+
+            if [ -z "$product_out" ]; then
+              echo "::error::PRODUCT_OUT is empty."
+              exit 1
+            fi
+
+            case "$product_out" in
+              /*) output_dir="$product_out" ;;
+              *) output_dir="$PWD/$product_out" ;;
+            esac
+
+            echo "Selected target: $target"
+            echo "Expected image: $output_dir/$image"
+
+            echo "BUILT_IMAGE=$image" >> "$GITHUB_ENV"
+            echo "BUILT_OUTPUT_DIR=$output_dir" >> "$GITHUB_ENV"
+
+            {
+              echo "Selected product: $DEVICE_PRODUCT"
+              echo "Selected build target: $target"
+              echo "Expected image: $image"
+              echo "Output directory: $output_dir"
+            } >> "$GITHUB_WORKSPACE/reports/build-info.txt"
+
+            make -j2 "$target"
+
+            if [ ! -s "$output_dir/$image" ]; then
+              echo "::error::Target completed without producing $image."
+              if [ -d "$output_dir" ]; then
+                find "$output_dir" -maxdepth 2 \
+                  -type f -name '*.img' -print
+              fi
+              exit 1
+            fi
           } 2>&1 | tee "$GITHUB_WORKSPACE/reports/build.log"
 
       - name: Collect image
         run: |
           set -eo pipefail
 
-          output="$GITHUB_WORKSPACE/android-recovery/out/target/product/$DEVICE_NAME"
           destination="$GITHUB_WORKSPACE/artifacts"
+          source_image="$BUILT_OUTPUT_DIR/$BUILT_IMAGE"
 
-          case "$BUILD_TARGET" in
-            vendorboot)
-              image="vendor_boot.img"
-              ;;
-            boot)
-              image="boot.img"
-              ;;
-            recovery)
-              image="recovery.img"
-              ;;
-            *)
-              echo "::error::Unsupported target: $BUILD_TARGET"
-              exit 1
-              ;;
-          esac
-
-          if [ ! -s "$output/$image" ]; then
-            echo "::error::Expected image not found: $output/$image"
+          if [ ! -s "$source_image" ]; then
+            echo "::error::Expected image missing: $source_image"
             exit 1
           fi
 
           mkdir -p "$destination"
-          cp "$output/$image" "$destination/"
+          cp "$source_image" "$destination/"
           cp "$GITHUB_WORKSPACE/reports/build-info.txt" "$destination/"
           cp "$GITHUB_WORKSPACE/reports/device-tree-patch.diff" "$destination/"
 
@@ -363,14 +377,14 @@ jobs:
             echo "EXPERIMENTAL BUILD — NOT VALIDATED FOR FLASHING"
             echo
             echo "Device: Google Pixel 6a / bluejay"
+            echo "Target selected from the device-tree configuration."
             echo "Android 16 compatibility has not been established."
             echo "Compilation does not prove bootability or decryption."
-            echo "Legacy configuration was patched during this build."
-            echo "Recovery boot-control HAL support still requires validation."
+            echo "Recovery boot-control HAL support requires validation."
           } > "$destination/READ-ME-FIRST.txt"
 
           cd "$destination"
-          sha256sum "$image" > SHA256SUMS.txt
+          sha256sum "$BUILT_IMAGE" > SHA256SUMS.txt
 
       - name: Upload experimental image
         uses: actions/upload-artifact@v4
