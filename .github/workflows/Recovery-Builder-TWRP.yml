@@ -18,13 +18,13 @@ on:
         type: string
 
       DEVICE_TREE_BRANCH:
-        description: "Existing branch in the device-tree repository"
+        description: "Existing device-tree branch"
         required: true
         default: "bluejay_beta-user-UpsideDownCake-UPP2.230217.004-9663077-release-keys"
         type: string
 
       BUILD_TARGET:
-        description: "Experimental image target; must match the device tree"
+        description: "Experimental target; must match the device tree"
         required: true
         default: "vendorboot"
         type: choice
@@ -46,6 +46,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
 
+    defaults:
+      run:
+        shell: bash
+
     env:
       MANIFEST_URL: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git
       MANIFEST_BRANCH: ${{ inputs.MANIFEST_BRANCH }}
@@ -55,24 +59,22 @@ jobs:
       DEVICE_PATH: device/google/bluejay
       DEVICE_NAME: bluejay
 
-    defaults:
-      run:
-        shell: bash
-
     steps:
       - name: Check out builder repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Prepare report directory
+      - name: Prepare diagnostic directory
         run: |
+          set -eo pipefail
+
           mkdir -p "$GITHUB_WORKSPACE/reports"
 
           {
             echo "Device: $DEVICE_NAME"
             echo "Manifest: $MANIFEST_URL"
             echo "Manifest branch: $MANIFEST_BRANCH"
-            echo "Tree: $DEVICE_TREE"
-            echo "Tree branch: $DEVICE_TREE_BRANCH"
+            echo "Device tree: $DEVICE_TREE"
+            echo "Device-tree branch: $DEVICE_TREE_BRANCH"
             echo "Requested target: ${BUILD_TARGET}image"
             echo
             echo "EXPERIMENTAL: Android 16 compatibility is not established."
@@ -86,48 +88,49 @@ jobs:
         run: |
           set -eo pipefail
 
-          sudo apt-get update
+          {
+            sudo apt-get update
 
-          sudo env DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y --no-install-recommends \
-              bc \
-              bison \
-              build-essential \
-              ca-certificates \
-              ccache \
-              cpio \
-              curl \
-              flex \
-              g++-multilib \
-              gcc-multilib \
-              git \
-              git-lfs \
-              gnupg \
-              gperf \
-              lib32ncurses-dev \
-              lib32readline-dev \
-              lib32z1-dev \
-              libelf-dev \
-              liblz4-tool \
-              libncurses-dev \
-              libssl-dev \
-              libxml2-utils \
-              lzop \
-              python3 \
-              rsync \
-              schedtool \
-              squashfs-tools \
-              unzip \
-              wget \
-              xsltproc \
-              zip \
-              zlib1g-dev \
-            2>&1 | tee "$GITHUB_WORKSPACE/reports/dependencies.log"
+            sudo env DEBIAN_FRONTEND=noninteractive \
+              apt-get install -y --no-install-recommends \
+                bc \
+                bison \
+                build-essential \
+                ca-certificates \
+                ccache \
+                cpio \
+                curl \
+                flex \
+                g++-multilib \
+                gcc-multilib \
+                git \
+                git-lfs \
+                gnupg \
+                gperf \
+                lib32ncurses-dev \
+                lib32readline-dev \
+                lib32z1-dev \
+                libelf-dev \
+                liblz4-tool \
+                libncurses-dev \
+                libssl-dev \
+                libxml2-utils \
+                lzop \
+                python3 \
+                rsync \
+                schedtool \
+                squashfs-tools \
+                unzip \
+                wget \
+                xsltproc \
+                zip \
+                zlib1g-dev
 
-          sudo apt-get clean
+            sudo apt-get clean
+          } 2>&1 | tee "$GITHUB_WORKSPACE/reports/dependencies.log"
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "11"
@@ -138,4 +141,191 @@ jobs:
 
           mkdir -p "$HOME/bin"
 
-          curl --fail --location --r
+          curl --fail --show-error --location --retry 3 --output "$HOME/bin/repo" "https://storage.googleapis.com/git-repo-downloads/repo" 2>&1 | tee "$GITHUB_WORKSPACE/reports/install-repo.log"
+
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+          "$HOME/bin/repo" --version \
+            2>&1 | tee -a "$GITHUB_WORKSPACE/reports/install-repo.log"
+
+      - name: Initialize TWRP source
+        run: |
+          set -eo pipefail
+
+          git config --global user.name "GitHub Actions"
+          git config --global user.email \
+            "github-actions[bot]@users.noreply.github.com"
+
+          mkdir -p "$GITHUB_WORKSPACE/android-recovery"
+          cd "$GITHUB_WORKSPACE/android-recovery"
+
+          repo init \
+            --depth=1 \
+            -u "$MANIFEST_URL" \
+            -b "$MANIFEST_BRANCH" \
+            2>&1 | tee "$GITHUB_WORKSPACE/reports/repo-init.log"
+
+      - name: Download TWRP source
+        run: |
+          set -eo pipefail
+
+          cd "$GITHUB_WORKSPACE/android-recovery"
+
+          repo sync \
+            -c \
+            -j2 \
+            --force-sync \
+            --no-clone-bundle \
+            --no-tags \
+            2>&1 | tee "$GITHUB_WORKSPACE/reports/repo-sync.log"
+
+      - name: Clone Pixel 6a device tree
+        run: |
+          set -eo pipefail
+
+          cd "$GITHUB_WORKSPACE/android-recovery"
+
+          if [ -e "$DEVICE_PATH" ]; then
+            echo "::error::Device destination already exists: $DEVICE_PATH"
+            exit 1
+          fi
+
+          git clone \
+            --depth=1 \
+            --single-branch \
+            --branch "$DEVICE_TREE_BRANCH" \
+            "$DEVICE_TREE" \
+            "$DEVICE_PATH" \
+            2>&1 | tee "$GITHUB_WORKSPACE/reports/tree-clone.log"
+
+          git -C "$DEVICE_PATH" lfs pull \
+            2>&1 | tee "$GITHUB_WORKSPACE/reports/tree-lfs.log"
+
+          {
+            echo
+            echo "Device-tree commit:"
+            git -C "$DEVICE_PATH" rev-parse HEAD
+          } >> "$GITHUB_WORKSPACE/reports/build-info.txt"
+
+      - name: Inspect and validate device configuration
+        run: |
+          set -eo pipefail
+
+          cd "$GITHUB_WORKSPACE/android-recovery"
+
+          {
+            echo "=== Device-tree files ==="
+            git -C "$DEVICE_PATH" ls-files
+
+            for name in \
+              AndroidProducts.mk \
+              BoardConfig.mk \
+              device.mk \
+              omni_bluejay.mk \
+              twrp_bluejay.mk \
+              recovery.fstab
+            do
+              if [ -f "$DEVICE_PATH/$name" ]; then
+                echo
+                echo "=== $name ==="
+                cat "$DEVICE_PATH/$name"
+              fi
+            done
+
+            echo
+            echo "=== Available disk space ==="
+            df -h
+          } | tee "$GITHUB_WORKSPACE/reports/device-config.txt"
+
+          for required in AndroidProducts.mk BoardConfig.mk; do
+            if [ ! -f "$DEVICE_PATH/$required" ]; then
+              echo "::error::Missing $DEVICE_PATH/$required"
+              exit 1
+            fi
+          done
+
+          if [ -f "$DEVICE_PATH/twrp_${DEVICE_NAME}.mk" ]; then
+            product="twrp_${DEVICE_NAME}"
+          elif [ -f "$DEVICE_PATH/omni_${DEVICE_NAME}.mk" ]; then
+            product="omni_${DEVICE_NAME}"
+          else
+            echo "::error::No matching TWRP or Omni product makefile."
+            exit 1
+          fi
+
+          echo "DEVICE_PRODUCT=$product" >> "$GITHUB_ENV"
+          echo "Selected product: $product" \
+            >> "$GITHUB_WORKSPACE/reports/build-info.txt"
+
+      - name: Build experimental recovery image
+        run: |
+          set -eo pipefail
+
+          cd "$GITHUB_WORKSPACE/android-recovery"
+
+          {
+            source build/envsetup.sh
+            lunch "${DEVICE_PRODUCT}-eng"
+            make -j2 "${BUILD_TARGET}image"
+          } 2>&1 | tee "$GITHUB_WORKSPACE/reports/build.log"
+
+      - name: Collect image
+        run: |
+          set -eo pipefail
+
+          output="$GITHUB_WORKSPACE/android-recovery/out/target/product/$DEVICE_NAME"
+          destination="$GITHUB_WORKSPACE/artifacts"
+
+          case "$BUILD_TARGET" in
+            vendorboot)
+              image="vendor_boot.img"
+              ;;
+            boot)
+              image="boot.img"
+              ;;
+            recovery)
+              image="recovery.img"
+              ;;
+            *)
+              echo "::error::Unsupported target: $BUILD_TARGET"
+              exit 1
+              ;;
+          esac
+
+          if [ ! -s "$output/$image" ]; then
+            echo "::error::Expected image not found: $output/$image"
+            exit 1
+          fi
+
+          mkdir -p "$destination"
+          cp "$output/$image" "$destination/"
+          cp "$GITHUB_WORKSPACE/reports/build-info.txt" "$destination/"
+
+          {
+            echo "EXPERIMENTAL BUILD — NOT VALIDATED FOR FLASHING"
+            echo
+            echo "Device: Google Pixel 6a / bluejay"
+            echo "Android 16 compatibility has not been established."
+            echo "A successful build does not prove bootability or decryption."
+          } > "$destination/READ-ME-FIRST.txt"
+
+          cd "$destination"
+          sha256sum "$image" > SHA256SUMS.txt
+
+      - name: Upload experimental image
+        uses: actions/upload-artifact@v4
+        with:
+          name: experimental-twrp-bluejay-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-bluejay-logs-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
