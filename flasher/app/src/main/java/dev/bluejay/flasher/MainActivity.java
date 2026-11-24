@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
     private Button rebootRecovery;
     private Button rebootSystem;
     private ProgressBar progress;
+    private TextView progressLabel;
     private View pageFlash;
     private View pageBuilds;
     private Button tabFlash;
@@ -100,6 +101,7 @@ public class MainActivity extends Activity {
         rebootRecovery = findViewById(R.id.button_reboot_recovery);
         rebootSystem = findViewById(R.id.button_reboot_system);
         progress = findViewById(R.id.progress);
+        progressLabel = findViewById(R.id.progress_label);
         pageFlash = findViewById(R.id.page_flash);
         pageBuilds = findViewById(R.id.page_builds);
         tabFlash = findViewById(R.id.tab_flash);
@@ -289,6 +291,10 @@ public class MainActivity extends Activity {
         final String name = image.displayName;
 
         setBusy(true);
+        progress.setIndeterminate(false);
+        progress.setProgress(0);
+        progressLabel.setVisibility(View.VISIBLE);
+        showStage(5, "Step 1 of 5 · Staging " + name);
         status.setText("Starting…");
 
         worker.execute(() -> {
@@ -297,6 +303,7 @@ public class MainActivity extends Activity {
                 File staged = stage(source);
                 String localHash = sha256(staged);
 
+                showStage(20, "Step 2 of 5 · Checking " + target);
                 post("Checking " + target + "…");
                 RootShell.Result probe = RootShell.run("test -e " + target + " && echo present");
                 if (probe.exitCode != 0 || !probe.output.contains("present")) {
@@ -309,6 +316,7 @@ public class MainActivity extends Activity {
                 File cachedBackup = new File(getCacheDir(),
                         "backup-" + partition + "_" + slot + "-" + stamp + ".img");
 
+                showStage(30, "Step 3 of 5 · Backing up " + target);
                 post("Backing up " + target + "…");
                 RootShell.Result backupResult = RootShell.run(
                         "dd if=" + target
@@ -326,6 +334,7 @@ public class MainActivity extends Activity {
                 copy(cachedBackup, backup);
                 cachedBackup.delete();
 
+                showStage(60, "Step 4 of 5 · Writing " + name + " to " + target);
                 post("Writing " + name + " to " + target + "…");
                 RootShell.Result write = RootShell.run(
                         "dd if='" + staged.getAbsolutePath() + "'"
@@ -334,6 +343,7 @@ public class MainActivity extends Activity {
                     throw new IllegalStateException("Write failed: " + tail(write.output));
                 }
 
+                showStage(85, "Step 5 of 5 · Verifying the written bytes");
                 post("Verifying the written bytes…");
                 RootShell.Result verify = RootShell.run(
                         "head -c " + staged.length() + " " + target + " | sha256sum");
@@ -345,6 +355,7 @@ public class MainActivity extends Activity {
                                     + backup.getAbsolutePath() + " with dd.");
                 }
 
+                showStage(100, "Done · " + partition + "_" + slot + " flashed and verified");
                 post("Flashed " + partition + "_" + slot + " ("
                         + humanSize(staged.length()) + ").\n"
                         + "Verified sha256: " + localHash + "\n"
@@ -354,9 +365,16 @@ public class MainActivity extends Activity {
                     rebootSystem.setVisibility(View.VISIBLE);
                 });
             } catch (Exception e) {
+                ui.post(() -> progressLabel.setText(
+                        "Stopped · flash failed — see details below"));
                 post("Flash stopped: " + message(e));
             } finally {
-                ui.post(() -> setBusy(false));
+                // Leave the bar at its final state so the result stays visible.
+                ui.post(() -> {
+                    pickButton.setEnabled(true);
+                    flashButton.setEnabled(true);
+                    confirm.setEnabled(true);
+                });
             }
         });
     }
@@ -582,10 +600,27 @@ public class MainActivity extends Activity {
     }
 
     private void setBusy(boolean busy) {
-        progress.setVisibility(busy ? View.VISIBLE : View.GONE);
+        if (busy) {
+            progress.setIndeterminate(true);
+            progress.setProgress(0);
+            progress.setVisibility(View.VISIBLE);
+        } else {
+            progress.setVisibility(View.GONE);
+            progressLabel.setVisibility(View.GONE);
+        }
         pickButton.setEnabled(!busy);
         flashButton.setEnabled(!busy);
         confirm.setEnabled(!busy);
+    }
+
+    /** Advances the flash progress bar and its step label from the worker thread. */
+    private void showStage(int percent, String label) {
+        ui.post(() -> {
+            progress.setIndeterminate(false);
+            progress.setProgress(percent);
+            progressLabel.setVisibility(View.VISIBLE);
+            progressLabel.setText(label);
+        });
     }
 
     private void post(String text) {

@@ -163,13 +163,23 @@
                     android:layout_marginTop="8dp"
                     android:text="Back up and flash" />
 
+                <TextView
+                    android:id="@+id/progress_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
                 <ProgressBar
                     android:id="@+id/progress"
                     style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="4dp"
                     android:indeterminate="true"
+                    android:max="100"
                     android:visibility="gone" />
 
                 <TextView
