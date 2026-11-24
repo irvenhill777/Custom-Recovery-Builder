@@ -38,17 +38,12 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * Writes a recovery image to the Pixel 6a (bluejay) boot or vendor_boot
- * partition on a rooted device, and shows the equivalent fastboot commands for
- * everyone else.
- */
+/** Writes a recovery image to bluejay's boot or vendor_boot partition. */
 public class MainActivity extends Activity {
 
     private static final int REQUEST_PICK_IMAGE = 1;
     private static final String BY_NAME = "/dev/block/by-name/";
-    private static final String REPO_URL =
-            "https://github.com/irvenhill777/Custom-Recovery-Builder";
+    private static final String REPO_URL = "https://github.com/irvenhill777/Custom-Recovery-Builder";
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -121,14 +116,10 @@ public class MainActivity extends Activity {
         tabFlash.setOnClickListener(v -> showTab(true));
         tabBuilds.setOnClickListener(v -> showTab(false));
 
-        findViewById(R.id.button_open_twrp).setOnClickListener(v -> openUrl(
-                REPO_URL + "/actions/workflows/Recovery-Builder-TWRP.yml"));
-        findViewById(R.id.button_open_pbrp).setOnClickListener(v -> openUrl(
-                REPO_URL + "/actions/workflows/Recovery-Builder-PBRP.yml"));
-        findViewById(R.id.button_open_apk).setOnClickListener(v -> openUrl(
-                REPO_URL + "/actions/workflows/Build-Flasher-APK.yml"));
-        findViewById(R.id.button_open_releases).setOnClickListener(v -> openUrl(
-                REPO_URL + "/releases"));
+        findViewById(R.id.button_open_twrp).setOnClickListener(v -> openUrl(REPO_URL + "/actions/workflows/Recovery-Builder-TWRP.yml"));
+        findViewById(R.id.button_open_pbrp).setOnClickListener(v -> openUrl(REPO_URL + "/actions/workflows/Recovery-Builder-PBRP.yml"));
+        findViewById(R.id.button_open_apk).setOnClickListener(v -> openUrl(REPO_URL + "/actions/workflows/Build-Flasher-APK.yml"));
+        findViewById(R.id.button_open_releases).setOnClickListener(v -> openUrl(REPO_URL + "/releases"));
 
         ((TextView) findViewById(R.id.builds_info)).setText(
                 REPO_URL.replace("https://", "")
@@ -137,12 +128,9 @@ public class MainActivity extends Activity {
 
         showTab(true);
 
-        RadioGroup.OnCheckedChangeListener targetChanged =
-                (group, checkedId) -> renderFastboot();
-        ((RadioGroup) findViewById(R.id.partition_group))
-                .setOnCheckedChangeListener(targetChanged);
-        ((RadioGroup) findViewById(R.id.slot_group))
-                .setOnCheckedChangeListener(targetChanged);
+        RadioGroup.OnCheckedChangeListener targetChanged = (group, checkedId) -> renderFastboot();
+        ((RadioGroup) findViewById(R.id.partition_group)).setOnCheckedChangeListener(targetChanged);
+        ((RadioGroup) findViewById(R.id.slot_group)).setOnCheckedChangeListener(targetChanged);
 
         renderDevice();
         renderFastboot();
@@ -156,14 +144,10 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    // --- device / root -----------------------------------------------------
-
     private void renderDevice() {
         boolean bluejay = "bluejay".equalsIgnoreCase(Build.DEVICE);
         String line = "Device: " + Build.MODEL + " (" + Build.DEVICE + ")";
-        if (!bluejay) {
-            line += "\nNot a Pixel 6a — this flasher targets bluejay only.";
-        }
+        if (!bluejay) line += "\nNot a Pixel 6a — this flasher targets bluejay only.";
         deviceInfo.setText(line);
     }
 
@@ -172,43 +156,36 @@ public class MainActivity extends Activity {
         worker.execute(() -> {
             RootShell.Result id = RootShell.run("id");
             boolean ok = id.exitCode == 0 && id.output.contains("uid=0");
-            String suffix = "";
-            if (ok) {
-                suffix = RootShell.run("getprop ro.boot.slot_suffix").output.trim();
-            }
-            final boolean available = ok;
-            final String slotSuffix = suffix;
+            String suffix = ok ? RootShell.run("getprop ro.boot.slot_suffix").output.trim() : "";
             ui.post(() -> {
-                rooted = available;
-                rootStatus.setText(available
+                rooted = ok;
+                rootStatus.setText(ok
                         ? "Root: available — the app can back up and flash directly."
                         : "Root: not available — use the fastboot commands below from a PC.");
-                if ("_b".equals(slotSuffix)) {
-                    slotB.setChecked(true);
-                } else if ("_a".equals(slotSuffix)) {
-                    slotA.setChecked(true);
-                }
+                if ("_b".equals(suffix)) slotB.setChecked(true);
+                else if ("_a".equals(suffix)) slotA.setChecked(true);
             });
         });
     }
-
-    // --- image selection ---------------------------------------------------
 
     private void pickImage() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(intent, REQUEST_PICK_IMAGE);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_PICK_IMAGE
-                && resultCode == RESULT_OK
-                && data != null
-                && data.getData() != null) {
+        if (requestCode == REQUEST_PICK_IMAGE && resultCode == RESULT_OK
+                && data != null && data.getData() != null) {
             imageUri = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(imageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException ignored) {
+            }
             image = null;
             inspectImage();
         }
@@ -236,14 +213,9 @@ public class MainActivity extends Activity {
     }
 
     private void renderImage() {
-        imageInfo.setText(image.displayName + "\n"
-                + image.kindLabel() + " · " + humanSize(image.size));
-
-        if (image.kind == BootImage.Kind.VENDOR_BOOT) {
-            radioVendorBoot.setChecked(true);
-        } else if (image.kind == BootImage.Kind.BOOT) {
-            radioBoot.setChecked(true);
-        }
+        imageInfo.setText(image.displayName + "\n" + image.kindLabel() + " · " + humanSize(image.size));
+        if (image.kind == BootImage.Kind.VENDOR_BOOT) radioVendorBoot.setChecked(true);
+        else if (image.kind == BootImage.Kind.BOOT) radioBoot.setChecked(true);
     }
 
     private String displayName(Uri uri) {
@@ -252,24 +224,18 @@ public class MainActivity extends Activity {
                 int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
                 if (index >= 0) {
                     String name = cursor.getString(index);
-                    if (name != null && !name.isEmpty()) {
-                        return name;
-                    }
+                    if (name != null && !name.isEmpty()) return name;
                 }
             }
         } catch (Exception ignored) {
-            // Fall back to the URI's last path segment.
         }
         String last = uri.getLastPathSegment();
         return last == null ? "recovery.img" : last;
     }
 
-    // --- flashing ----------------------------------------------------------
-
     private void onFlashClicked() {
         if (!rooted) {
-            status.setText("Root is required to write a partition.\n"
-                    + "Use the fastboot commands below from a PC instead.");
+            status.setText("Root is required to write a partition.\nUse the fastboot commands below from a PC instead.");
             return;
         }
         if (imageUri == null || image == null) {
@@ -307,27 +273,22 @@ public class MainActivity extends Activity {
                 post("Checking " + target + "…");
                 RootShell.Result probe = RootShell.run("test -e " + target + " && echo present");
                 if (probe.exitCode != 0 || !probe.output.contains("present")) {
-                    throw new IllegalStateException(
-                            "Partition " + target + " does not exist on this device.");
+                    throw new IllegalStateException("Partition " + target + " does not exist on this device.");
                 }
 
-                String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
-                        .format(new Date());
-                File cachedBackup = new File(getCacheDir(),
-                        "backup-" + partition + "_" + slot + "-" + stamp + ".img");
+                String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+                File cachedBackup = new File(getCacheDir(), "backup-" + partition + "_" + slot + "-" + stamp + ".img");
 
                 showStage(30, "Step 3 of 5 · Backing up " + target);
                 post("Backing up " + target + "…");
                 RootShell.Result backupResult = RootShell.run(
-                        "dd if=" + target
-                                + " of='" + cachedBackup.getAbsolutePath() + "' bs=1M"
+                        "dd if=" + target + " of='" + cachedBackup.getAbsolutePath() + "' bs=1M"
                                 + " && chmod 644 '" + cachedBackup.getAbsolutePath() + "'");
                 if (backupResult.exitCode != 0) {
                     throw new IllegalStateException("Backup failed: " + tail(backupResult.output));
                 }
                 if (!cachedBackup.isFile() || cachedBackup.length() == 0) {
-                    throw new IllegalStateException(
-                            "Backup file is empty — stopping before anything is written.");
+                    throw new IllegalStateException("Backup file is empty — stopping before anything is written.");
                 }
 
                 File backup = new File(backupDir(), cachedBackup.getName());
@@ -336,40 +297,32 @@ public class MainActivity extends Activity {
 
                 showStage(60, "Step 4 of 5 · Writing " + name + " to " + target);
                 post("Writing " + name + " to " + target + "…");
-                RootShell.Result write = RootShell.run(
-                        "dd if='" + staged.getAbsolutePath() + "'"
-                                + " of=" + target + " bs=1M conv=fsync");
+                RootShell.Result write = RootShell.run("dd if='" + staged.getAbsolutePath() + "' of=" + target + " bs=1M conv=fsync");
                 if (write.exitCode != 0) {
                     throw new IllegalStateException("Write failed: " + tail(write.output));
                 }
 
                 showStage(85, "Step 5 of 5 · Verifying the written bytes");
                 post("Verifying the written bytes…");
-                RootShell.Result verify = RootShell.run(
-                        "head -c " + staged.length() + " " + target + " | sha256sum");
+                RootShell.Result verify = RootShell.run("head -c " + staged.length() + " " + target + " | sha256sum");
+                if (verify.exitCode != 0) {
+                    throw new IllegalStateException("Verification command failed: " + tail(verify.output));
+                }
                 String deviceHash = firstWord(verify.output);
                 if (!localHash.equals(deviceHash)) {
-                    throw new IllegalStateException(
-                            "Verification failed (device " + deviceHash
-                                    + ", image " + localHash + ").\nDo not reboot — restore "
-                                    + backup.getAbsolutePath() + " with dd.");
+                    throw new IllegalStateException("Verification failed (device " + deviceHash + ", image " + localHash + ").\nDo not reboot — restore " + backup.getAbsolutePath() + " with dd.");
                 }
 
                 showStage(100, "Done · " + partition + "_" + slot + " flashed and verified");
-                post("Flashed " + partition + "_" + slot + " ("
-                        + humanSize(staged.length()) + ").\n"
-                        + "Verified sha256: " + localHash + "\n"
-                        + "Backup: " + backup.getAbsolutePath());
+                post("Flashed " + partition + "_" + slot + " (" + humanSize(staged.length()) + ").\nVerified sha256: " + localHash + "\nBackup: " + backup.getAbsolutePath());
                 ui.post(() -> {
                     rebootRecovery.setVisibility(View.VISIBLE);
                     rebootSystem.setVisibility(View.VISIBLE);
                 });
             } catch (Exception e) {
-                ui.post(() -> progressLabel.setText(
-                        "Stopped · flash failed — see details below"));
+                ui.post(() -> progressLabel.setText("Stopped · flash failed — see details below"));
                 post("Flash stopped: " + message(e));
             } finally {
-                // Leave the bar at its final state so the result stays visible.
                 ui.post(() -> {
                     pickButton.setEnabled(true);
                     flashButton.setEnabled(true);
@@ -381,39 +334,27 @@ public class MainActivity extends Activity {
 
     private File stage(Uri uri) throws Exception {
         File staged = new File(getCacheDir(), "staged-recovery.img");
-        try (InputStream in = getContentResolver().openInputStream(uri);
-             OutputStream out = new FileOutputStream(staged)) {
-            if (in == null) {
-                throw new IllegalStateException("The selected image could not be opened.");
-            }
+        try (InputStream in = getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(staged)) {
+            if (in == null) throw new IllegalStateException("The selected image could not be opened.");
             byte[] buffer = new byte[1 << 16];
             int read;
-            while ((read = in.read(buffer)) > 0) {
-                out.write(buffer, 0, read);
-            }
+            while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
         }
         return staged;
     }
 
     private File backupDir() throws Exception {
         File dir = getExternalFilesDir(null);
-        if (dir == null) {
-            dir = getFilesDir();
-        }
-        if (!dir.isDirectory() && !dir.mkdirs()) {
-            throw new IllegalStateException("Cannot create backup directory " + dir);
-        }
+        if (dir == null) dir = getFilesDir();
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new IllegalStateException("Cannot create backup directory " + dir);
         return dir;
     }
 
     private void copy(File from, File to) throws Exception {
-        try (InputStream in = new FileInputStream(from);
-             OutputStream out = new FileOutputStream(to)) {
+        try (InputStream in = new FileInputStream(from); OutputStream out = new FileOutputStream(to)) {
             byte[] buffer = new byte[1 << 16];
             int read;
-            while ((read = in.read(buffer)) > 0) {
-                out.write(buffer, 0, read);
-            }
+            while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
         }
     }
 
@@ -422,14 +363,10 @@ public class MainActivity extends Activity {
         try (InputStream in = new FileInputStream(file)) {
             byte[] buffer = new byte[1 << 16];
             int read;
-            while ((read = in.read(buffer)) > 0) {
-                digest.update(buffer, 0, read);
-            }
+            while ((read = in.read(buffer)) > 0) digest.update(buffer, 0, read);
         }
         StringBuilder hex = new StringBuilder();
-        for (byte b : digest.digest()) {
-            hex.append(String.format(Locale.US, "%02x", b));
-        }
+        for (byte b : digest.digest()) hex.append(String.format(Locale.US, "%02x", b));
         return hex.toString();
     }
 
@@ -441,8 +378,6 @@ public class MainActivity extends Activity {
             ui.post(() -> setBusy(false));
         });
     }
-
-    // --- tabs --------------------------------------------------------------
 
     private void showTab(boolean flash) {
         pageFlash.setVisibility(flash ? View.VISIBLE : View.GONE);
@@ -461,62 +396,43 @@ public class MainActivity extends Activity {
         }
     }
 
-    // --- ui helpers --------------------------------------------------------
-
-    private String partitionName() {
-        return radioVendorBoot.isChecked() ? "vendor_boot" : "boot";
-    }
-
-    private String slotName() {
-        return slotB.isChecked() ? "b" : "a";
-    }
+    private String partitionName() { return radioVendorBoot.isChecked() ? "vendor_boot" : "boot"; }
+    private String slotName() { return slotB.isChecked() ? "b" : "a"; }
 
     private void renderFastboot() {
         String fileName = image == null ? "recovery.img" : image.displayName;
-        fastbootInfo.setText("adb reboot bootloader\n"
-                + "fastboot flash " + partitionName() + "_" + slotName()
-                + " \"" + fileName + "\"\n"
-                + "fastboot reboot recovery\n\n"
+        fastbootInfo.setText("adb reboot bootloader\nfastboot flash " + partitionName() + "_" + slotName()
+                + " \"" + fileName + "\"\nfastboot reboot recovery\n\n"
                 + "bluejay has no recovery partition: Android 12 images are\n"
                 + "vendor_boot, Android 13+ images are boot. Match the image you\n"
                 + "picked to the right partition above.");
     }
 
     private void copyCommands() {
-        ClipboardManager clipboard =
-                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         clipboard.setPrimaryClip(ClipData.newPlainText("fastboot", fastbootInfo.getText()));
         Toast.makeText(this, "Fastboot commands copied", Toast.LENGTH_SHORT).show();
     }
 
-    // --- usb debugging / adb ----------------------------------------------
-
     private void openDeveloperOptions() {
-        startActivity(new Intent(
-                android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
+        startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
     }
 
     private void enableAdbUsb() {
         if (!rooted) {
-            status.setText("Root is required to toggle ADB from the app.\n"
-                    + "Enable USB debugging by hand in developer options.");
+            status.setText("Root is required to toggle ADB from the app.\nEnable USB debugging by hand in developer options.");
             return;
         }
         setBusy(true);
         post("Enabling ADB over USB…");
         worker.execute(() -> {
-            RootShell.Result result = RootShell.run(
-                    "settings put global adb_enabled 1"
-                            + " && setprop persist.sys.usb.config adb,mtp"
-                            + " && echo enabled");
+            RootShell.Result result = RootShell.run("settings put global adb_enabled 1 && setprop persist.sys.usb.config adb,mtp && echo enabled");
             boolean ok = result.exitCode == 0 && result.output.contains("enabled");
             ui.post(() -> {
                 adbCommand = "adb devices";
                 renderAdb();
                 setBusy(false);
-                status.setText(ok
-                        ? "ADB over USB enabled.\nPlug the phone into a PC and run:\nadb devices"
-                        : "Could not enable ADB over USB:\n" + tail(result.output));
+                status.setText(ok ? "ADB over USB enabled.\nPlug the phone into a PC and run:\nadb devices" : "Could not enable ADB over USB:\n" + tail(result.output));
             });
         });
     }
@@ -529,42 +445,30 @@ public class MainActivity extends Activity {
         setBusy(true);
         post("Starting ADB over Wi-Fi…");
         worker.execute(() -> {
-            RootShell.Result result = RootShell.run(
-                    "setprop service.adb.tcp.port 5555"
-                            + " && stop adbd && start adbd"
-                            + " && echo enabled");
+            RootShell.Result result = RootShell.run("setprop service.adb.tcp.port 5555 && stop adbd && start adbd && echo enabled");
             boolean ok = result.exitCode == 0 && result.output.contains("enabled");
             String address = wifiAddress();
-            String command = address == null
-                    ? "adb connect <phone-ip>:5555"
-                    : "adb connect " + address + ":5555";
+            String command = address == null ? "adb connect <phone-ip>:5555" : "adb connect " + address + ":5555";
             ui.post(() -> {
                 adbCommand = command;
                 renderAdb();
                 setBusy(false);
-                if (ok) {
-                    status.setText("ADB over Wi-Fi listening on port 5555.\nOn a PC: " + command
-                            + (address == null
-                            ? "\nPhone IP could not be read — check the Wi-Fi connection."
-                            : ""));
-                } else {
-                    status.setText("Could not start ADB over Wi-Fi:\n" + tail(result.output));
-                }
+                if (ok) status.setText("ADB over Wi-Fi listening on port 5555.\nOn a PC: " + command
+                        + (address == null ? "\nPhone IP could not be read — check the Wi-Fi connection." : ""));
+                else status.setText("Could not start ADB over Wi-Fi:\n" + tail(result.output));
             });
         });
     }
 
     private void copyAdbCommand() {
-        ClipboardManager clipboard =
-                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(ClipData.newPlainText("adb", adbInfo.getText()));
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("adb", adbCommand));
         Toast.makeText(this, "ADB command copied", Toast.LENGTH_SHORT).show();
     }
 
     private void rebootBootloader() {
         if (!rooted) {
-            status.setText("Root is required to reboot from the app.\n"
-                    + "From a PC: adb reboot bootloader");
+            status.setText("Root is required to reboot from the app.\nFrom a PC: adb reboot bootloader");
             return;
         }
         setBusy(true);
@@ -576,25 +480,19 @@ public class MainActivity extends Activity {
     }
 
     private void renderAdb() {
-        adbInfo.setText(adbCommand + "\n\nUSB debugging must be on in developer options for\n"
-                + "adb to see the phone. Wireless ADB uses port 5555.");
+        adbInfo.setText(adbCommand + "\n\nUSB debugging must be on in developer options for\nadb to see the phone. Wireless ADB uses port 5555.");
     }
 
     private static String wifiAddress() {
         try {
             for (NetworkInterface nif : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                if (!nif.isUp() || !nif.getName().startsWith("wlan")) {
-                    continue;
-                }
+                if (!nif.isUp() || !nif.getName().startsWith("wlan")) continue;
                 for (InterfaceAddress address : nif.getInterfaceAddresses()) {
                     InetAddress inet = address.getAddress();
-                    if (inet instanceof Inet4Address && !inet.isLoopbackAddress()) {
-                        return inet.getHostAddress();
-                    }
+                    if (inet instanceof Inet4Address && !inet.isLoopbackAddress()) return inet.getHostAddress();
                 }
             }
         } catch (Exception ignored) {
-            // No usable network interface.
         }
         return null;
     }
@@ -613,7 +511,6 @@ public class MainActivity extends Activity {
         confirm.setEnabled(!busy);
     }
 
-    /** Advances the flash progress bar and its step label from the worker thread. */
     private void showStage(int percent, String label) {
         ui.post(() -> {
             progress.setIndeterminate(false);
@@ -623,31 +520,23 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void post(String text) {
-        ui.post(() -> status.setText(text));
-    }
+    private void post(String text) { ui.post(() -> status.setText(text)); }
 
     private static String firstWord(String text) {
         String trimmed = text.trim();
-        if (trimmed.isEmpty()) {
-            return "";
-        }
+        if (trimmed.isEmpty()) return "";
         return trimmed.split("\\s+")[0].toLowerCase(Locale.US);
     }
 
     private static String tail(String text) {
         String trimmed = text.trim();
-        if (trimmed.isEmpty()) {
-            return "no output";
-        }
+        if (trimmed.isEmpty()) return "no output";
         String[] lines = trimmed.split("\n");
         return lines[lines.length - 1];
     }
 
     private static String humanSize(long bytes) {
-        if (bytes >= 1024L * 1024L) {
-            return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
-        }
+        if (bytes >= 1024L * 1024L) return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
         return String.format(Locale.US, "%.0f KB", bytes / 1024.0);
     }
 
