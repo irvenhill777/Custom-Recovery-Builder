@@ -1,3 +1,4 @@
+
 name: Build Flasher APK
 
 on:
@@ -11,6 +12,7 @@ on:
         options:
           - debug
           - release
+
   push:
     paths:
       - "flasher/**"
@@ -46,7 +48,6 @@ jobs:
       - name: Install Android command-line tools
         run: |
           set -eo pipefail
-
           sdk_root="$HOME/android-sdk"
           mkdir -p "$sdk_root/cmdline-tools"
 
@@ -61,18 +62,20 @@ jobs:
             echo "ANDROID_HOME=$sdk_root"
             echo "ANDROID_SDK_ROOT=$sdk_root"
           } >> "$GITHUB_ENV"
+
           echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: Install platform and build tools
         run: |
           set -eo pipefail
 
-          # sdkmanager closes stdin early, so `yes` exits with SIGPIPE (141).
           set +o pipefail
           yes | sdkmanager --licenses > /dev/null
           set -o pipefail
 
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" | tail -n 20
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" | tail -n 20
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
